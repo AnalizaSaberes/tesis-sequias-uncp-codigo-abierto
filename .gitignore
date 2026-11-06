@@ -1,0 +1,20 @@
+﻿01_datos/*
+!01_datos/README.md
+.env
+.env.*
+__pycache__/
+.ipynb_checkpoints/
+renv/library/
+.Rhistory
+
+# Datos derivados por estacion pendientes de autorizacion
+03_resultados/01_regionalizacion/tablas/estaciones_clusters_ORIGINAL.csv
+
+# Auditorias internas y respaldos
+04_documentacion/reproducibilidad/AUDITORIA_*
+*.bak
+
+# Graficos HTML interactivos pendientes de revision
+03_resultados/04_copulas/figuras/copula_3d_cluster*.html
+03_resultados/04_copulas/figuras/copula_3d_cluster*_files/
+

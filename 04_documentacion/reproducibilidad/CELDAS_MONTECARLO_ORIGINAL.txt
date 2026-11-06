@@ -1,0 +1,352 @@
+﻿============================================================
+CELDA 1 - code
+============================================================
+# =========================================================
+# PREDICCIÃ“N PROBABILÃSTICA DE SEQUÃAS MEDIANTE MONTE CARLO
+# nSPEI-3 + marginales seleccionadas + cÃ³pula de Gumbel
+# =========================================================
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyverse,
+  janitor,
+  lmomco,
+  copula,
+  ggplot2,
+  patchwork
+)
+
+# ---------------------------------------------------------
+# 1. RUTAS
+# ---------------------------------------------------------
+ruta_base <- "/Volumes/USB/PROYECTO_SEQUIAS_COPULAS_UNCP"
+ruta_procesados <- file.path(ruta_base, "DATOS", "PROCESADOS")
+ruta_figuras <- file.path(ruta_base, "RESULTADOS", "FIGURAS")
+ruta_tablas  <- file.path(ruta_base, "RESULTADOS", "TABLAS")
+ruta_csv     <- file.path(ruta_base, "RESULTADOS", "CSV")
+
+archivo_eventos <- file.path(ruta_procesados, "eventos_nspei_todas_escalas_clasificados.csv")
+
+# ---------------------------------------------------------
+# 2. LEER BASE
+# ---------------------------------------------------------
+eventos <- read.csv(archivo_eventos, stringsAsFactors = FALSE) %>%
+  clean_names() %>%
+  mutate(
+    fecha_inicio = as.Date(fecha_inicio),
+    fecha_fin = as.Date(fecha_fin),
+    cluster_ward = as.factor(cluster_ward)
+  )
+
+eventos_3 <- eventos %>%
+  filter(escala == "nspei_3")
+
+datos_c1 <- eventos_3 %>% filter(as.character(cluster_ward) == "1")
+datos_c2 <- eventos_3 %>% filter(as.character(cluster_ward) == "2")
+datos_c3 <- eventos_3 %>% filter(as.character(cluster_ward) == "3")
+
+# ---------------------------------------------------------
+# 3. PARÃMETROS DE LAS CÃ“PULAS
+# ---------------------------------------------------------
+theta_c1 <- 2.8444
+theta_c2 <- 2.8306
+theta_c3 <- 3.3715
+
+# ---------------------------------------------------------
+# 4. FUNCIONES AUXILIARES
+# ---------------------------------------------------------
+ajustar_marginal_lmom <- function(x, dist_name) {
+  x <- as.numeric(x)
+  x <- x[is.finite(x) & x > 0]
+  lmr <- lmoms(x)
+  lmom2par(lmr, type = dist_name)
+}
+
+# Inversa aproximada por interpolaciÃ³n numÃ©rica
+inversa_marginal_lmom <- function(u, par_obj, xmax = NULL, n_grid = 5000) {
+  u <- pmin(pmax(u, 1e-8), 1 - 1e-8)
+
+  if (is.null(xmax)) {
+    xmax <- max(100, max(par_obj$para, na.rm = TRUE) * 10)
+  }
+
+  xgrid <- seq(1e-6, xmax, length.out = n_grid)
+  pgrid <- plmomco(xgrid, par_obj)
+
+  ok <- is.finite(pgrid) & !is.na(pgrid)
+  xgrid <- xgrid[ok]
+  pgrid <- pgrid[ok]
+
+  # asegurar monotonicidad
+  ord <- order(pgrid)
+  pgrid <- pgrid[ord]
+  xgrid <- xgrid[ord]
+
+  # quitar duplicados
+  keep <- !duplicated(pgrid)
+  pgrid <- pgrid[keep]
+  xgrid <- xgrid[keep]
+
+  approx(x = pgrid, y = xgrid, xout = u, rule = 2)$y
+}
+
+simular_cluster_mc <- function(datos_cluster, cluster_id, dist_d, dist_s, theta_gumbel,
+                               n_sim = 10000, semilla = 123) {
+
+  set.seed(semilla)
+
+  # Ajustar marginales
+  par_d <- ajustar_marginal_lmom(datos_cluster$duracion, dist_d)
+  par_s <- ajustar_marginal_lmom(datos_cluster$severidad, dist_s)
+
+  # Definir mÃ¡ximos de interpolaciÃ³n
+  xmax_d <- max(datos_cluster$duracion, na.rm = TRUE) * 3
+  xmax_s <- max(datos_cluster$severidad, na.rm = TRUE) * 3
+
+  # Simular de la cÃ³pula
+  cop <- gumbelCopula(param = theta_gumbel, dim = 2)
+  uv <- rCopula(n_sim, cop)
+
+  u <- uv[, 1]
+  v <- uv[, 2]
+
+  # Transformar al espacio real
+  d_sim <- inversa_marginal_lmom(u, par_d, xmax = xmax_d)
+  s_sim <- inversa_marginal_lmom(v, par_s, xmax = xmax_s)
+
+  tibble(
+    cluster = cluster_id,
+    u = u,
+    v = v,
+    duracion_sim = d_sim,
+    severidad_sim = s_sim
+  )
+}
+
+resumen_predictivo <- function(sim_df, datos_cluster) {
+
+  p50_d <- quantile(datos_cluster$duracion, 0.50, na.rm = TRUE)
+  p75_d <- quantile(datos_cluster$duracion, 0.75, na.rm = TRUE)
+  p90_d <- quantile(datos_cluster$duracion, 0.90, na.rm = TRUE)
+
+  p50_s <- quantile(datos_cluster$severidad, 0.50, na.rm = TRUE)
+  p75_s <- quantile(datos_cluster$severidad, 0.75, na.rm = TRUE)
+  p90_s <- quantile(datos_cluster$severidad, 0.90, na.rm = TRUE)
+
+  tibble(
+    n_sim = nrow(sim_df),
+
+    duracion_media = mean(sim_df$duracion_sim, na.rm = TRUE),
+    duracion_mediana = median(sim_df$duracion_sim, na.rm = TRUE),
+    duracion_p05 = quantile(sim_df$duracion_sim, 0.05, na.rm = TRUE),
+    duracion_p95 = quantile(sim_df$duracion_sim, 0.95, na.rm = TRUE),
+
+    severidad_media = mean(sim_df$severidad_sim, na.rm = TRUE),
+    severidad_mediana = median(sim_df$severidad_sim, na.rm = TRUE),
+    severidad_p05 = quantile(sim_df$severidad_sim, 0.05, na.rm = TRUE),
+    severidad_p95 = quantile(sim_df$severidad_sim, 0.95, na.rm = TRUE),
+
+    prob_d_gt_p50 = mean(sim_df$duracion_sim > p50_d, na.rm = TRUE),
+    prob_d_gt_p75 = mean(sim_df$duracion_sim > p75_d, na.rm = TRUE),
+    prob_d_gt_p90 = mean(sim_df$duracion_sim > p90_d, na.rm = TRUE),
+
+    prob_s_gt_p50 = mean(sim_df$severidad_sim > p50_s, na.rm = TRUE),
+    prob_s_gt_p75 = mean(sim_df$severidad_sim > p75_s, na.rm = TRUE),
+    prob_s_gt_p90 = mean(sim_df$severidad_sim > p90_s, na.rm = TRUE),
+
+    prob_joint_p75 = mean(sim_df$duracion_sim > p75_d & sim_df$severidad_sim > p75_s, na.rm = TRUE),
+    prob_joint_p90 = mean(sim_df$duracion_sim > p90_d & sim_df$severidad_sim > p90_s, na.rm = TRUE)
+  )
+}
+
+clasificar_escenario <- function(sim_df, datos_cluster) {
+
+  p75_d <- quantile(datos_cluster$duracion, 0.75, na.rm = TRUE)
+  p90_d <- quantile(datos_cluster$duracion, 0.90, na.rm = TRUE)
+
+  p75_s <- quantile(datos_cluster$severidad, 0.75, na.rm = TRUE)
+  p90_s <- quantile(datos_cluster$severidad, 0.90, na.rm = TRUE)
+
+  sim_df %>%
+    mutate(
+      escenario = case_when(
+        duracion_sim > p90_d & severidad_sim > p90_s ~ "Extremo",
+        duracion_sim > p75_d & severidad_sim > p75_s ~ "Severo",
+        TRUE ~ "TÃ­pico"
+      )
+    )
+}
+
+# ---------------------------------------------------------
+# 5. SIMULACIÃ“N MONTE CARLO
+# ---------------------------------------------------------
+n_sim <- 20000
+
+sim_c1 <- simular_cluster_mc(
+  datos_cluster = datos_c1,
+  cluster_id = "1",
+  dist_d = "wei",
+  dist_s = "pe3",
+  theta_gumbel = theta_c1,
+  n_sim = n_sim,
+  semilla = 101
+)
+
+sim_c2 <- simular_cluster_mc(
+  datos_cluster = datos_c2,
+  cluster_id = "2",
+  dist_d = "wei",
+  dist_s = "pe3",
+  theta_gumbel = theta_c2,
+  n_sim = n_sim,
+  semilla = 102
+)
+
+sim_c3 <- simular_cluster_mc(
+  datos_cluster = datos_c3,
+  cluster_id = "3",
+  dist_d = "pe3",
+  dist_s = "pe3",
+  theta_gumbel = theta_c3,
+  n_sim = n_sim,
+  semilla = 103
+)
+
+sim_all <- bind_rows(sim_c1, sim_c2, sim_c3)
+
+write.csv(
+  sim_all,
+  file.path(ruta_csv, "simulacion_montecarlo_nspei3_tres_clusters.csv"),
+  row.names = FALSE
+)
+
+# ---------------------------------------------------------
+# 6. RESÃšMENES PREDICTIVOS
+# ---------------------------------------------------------
+res_c1 <- resumen_predictivo(sim_c1, datos_c1) %>% mutate(cluster = "1")
+res_c2 <- resumen_predictivo(sim_c2, datos_c2) %>% mutate(cluster = "2")
+res_c3 <- resumen_predictivo(sim_c3, datos_c3) %>% mutate(cluster = "3")
+
+resumen_mc <- bind_rows(res_c1, res_c2, res_c3) %>%
+  select(cluster, everything())
+
+resumen_mc
+
+write.csv(
+  resumen_mc,
+  file.path(ruta_tablas, "resumen_prediccion_montecarlo_tres_clusters.csv"),
+  row.names = FALSE
+)
+
+# ---------------------------------------------------------
+# 7. CLASIFICAR ESCENARIOS
+# ---------------------------------------------------------
+esc_c1 <- clasificar_escenario(sim_c1, datos_c1)
+esc_c2 <- clasificar_escenario(sim_c2, datos_c2)
+esc_c3 <- clasificar_escenario(sim_c3, datos_c3)
+
+escenarios_all <- bind_rows(esc_c1, esc_c2, esc_c3)
+
+tabla_escenarios <- escenarios_all %>%
+  count(cluster, escenario) %>%
+  group_by(cluster) %>%
+  mutate(proporcion = n / sum(n)) %>%
+  ungroup()
+
+tabla_escenarios
+
+write.csv(
+  tabla_escenarios,
+  file.path(ruta_tablas, "escenarios_montecarlo_tres_clusters.csv"),
+  row.names = FALSE
+)
+
+# ---------------------------------------------------------
+# 8. FIGURAS
+# ---------------------------------------------------------
+theme_mc <- function() {
+  theme_minimal(base_size = 13) +
+    theme(
+      plot.title = element_text(face = "bold", size = 17, hjust = 0.5),
+      plot.subtitle = element_text(size = 11.5, hjust = 0.5, colour = "#444444"),
+      axis.title = element_text(face = "bold"),
+      strip.text = element_text(face = "bold"),
+      legend.position = "right",
+      panel.grid.minor = element_blank()
+    )
+}
+
+# Densidad de duraciÃ³n
+p_dur <- ggplot(sim_all, aes(x = duracion_sim, color = cluster, fill = cluster)) +
+  geom_density(alpha = 0.20, linewidth = 1) +
+  facet_wrap(~cluster, scales = "free", ncol = 3) +
+  labs(
+    title = "DistribuciÃ³n predictiva de la duraciÃ³n simulada",
+    subtitle = "SimulaciÃ³n Monte Carlo con cÃ³pula de Gumbel",
+    x = "DuraciÃ³n simulada (meses)",
+    y = "Densidad"
+  ) +
+  theme_mc()
+
+# Densidad de severidad
+p_sev <- ggplot(sim_all, aes(x = severidad_sim, color = cluster, fill = cluster)) +
+  geom_density(alpha = 0.20, linewidth = 1) +
+  facet_wrap(~cluster, scales = "free", ncol = 3) +
+  labs(
+    title = "DistribuciÃ³n predictiva de la severidad simulada",
+    subtitle = "SimulaciÃ³n Monte Carlo con cÃ³pula de Gumbel",
+    x = "Severidad simulada",
+    y = "Densidad"
+  ) +
+  theme_mc()
+
+# DispersiÃ³n simulada
+p_scatter <- ggplot(sim_all, aes(x = duracion_sim, y = severidad_sim)) +
+  geom_point(alpha = 0.10, size = 0.7, color = "#7f1d1d") +
+  facet_wrap(~cluster, scales = "free", ncol = 3) +
+  labs(
+    title = "Escenarios sintÃ©ticos de sequÃ­a simulados",
+    subtitle = "Dependencia duraciÃ³n-severidad mediante Monte Carlo",
+    x = "DuraciÃ³n simulada (meses)",
+    y = "Severidad simulada"
+  ) +
+  theme_mc()
+
+# Barras de escenarios
+p_esc <- ggplot(tabla_escenarios, aes(x = escenario, y = proporcion, fill = escenario)) +
+  geom_col() +
+  facet_wrap(~cluster, ncol = 3) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "ProporciÃ³n de escenarios simulados por cluster",
+    subtitle = "ClasificaciÃ³n en tÃ­pico, severo y extremo",
+    x = "Escenario",
+    y = "ProporciÃ³n"
+  ) +
+  theme_mc()
+
+p_dur
+p_sev
+p_scatter
+p_esc
+
+ggsave(
+  file.path(ruta_figuras, "mc_densidad_duracion_tres_clusters.png"),
+  p_dur, width = 12, height = 4.8, dpi = 300, bg = "white"
+)
+
+ggsave(
+  file.path(ruta_figuras, "mc_densidad_severidad_tres_clusters.png"),
+  p_sev, width = 12, height = 4.8, dpi = 300, bg = "white"
+)
+
+ggsave(
+  file.path(ruta_figuras, "mc_scatter_tres_clusters.png"),
+  p_scatter, width = 12, height = 4.8, dpi = 300, bg = "white"
+)
+
+ggsave(
+  file.path(ruta_figuras, "mc_escenarios_tres_clusters.png"),
+  p_esc, width = 12, height = 4.8, dpi = 300, bg = "white"
+)
+

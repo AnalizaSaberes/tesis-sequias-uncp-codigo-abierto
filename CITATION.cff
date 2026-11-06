@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "Si utiliza este repositorio en investigación, cite la tesis indicada en preferred-citation y, cuando corresponda, el repositorio reproducible."
+title: "Repositorio reproducible: Predicción probabilística de sequías en el sur del Perú"
+type: software
+authors:
+  - family-names: "Arriaga Gómez"
+    given-names: "Virgilio"
+abstract: "Repositorio reproducible de una investigación sobre caracterización de sequías, regionalización hidroclimática, ajuste de distribuciones marginales, dependencia bivariada mediante cópulas, periodos de retorno conjuntos, riesgo condicional y simulación Monte Carlo en el sur del Perú."
+keywords:
+  - sequía
+  - nSPEI
+  - cópulas
+  - análisis multivariado
+  - periodos de retorno
+  - riesgo condicional
+  - Monte Carlo
+  - Perú
+preferred-citation:
+  type: generic
+  authors:
+    - family-names: "Arriaga Gómez"
+      given-names: "Virgilio"
+  title: "Predicción probabilística de sequías en el sur del Perú"
+  thesis-type: "Tesis de maestría"
+  year: 2026

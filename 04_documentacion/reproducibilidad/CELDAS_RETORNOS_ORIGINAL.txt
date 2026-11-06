@@ -1,0 +1,898 @@
+﻿============================================================
+CELDA 1 - markdown
+============================================================
+
+============================================================
+CELDA 2 - markdown
+============================================================
+
+============================================================
+CELDA 3 - markdown
+============================================================
+
+============================================================
+CELDA 4 - code
+============================================================
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyverse,
+  janitor,
+  lmomco,
+  copula,
+  ggplot2,
+  patchwork,
+  viridisLite
+)
+
+============================================================
+CELDA 5 - code
+============================================================
+ruta_base <- "/Volumes/USB/PROYECTO_SEQUIAS_COPULAS_UNCP"
+
+ruta_procesados <- file.path(ruta_base, "DATOS", "PROCESADOS")
+ruta_tablas     <- file.path(ruta_base, "RESULTADOS", "TABLAS")
+ruta_figuras    <- file.path(ruta_base, "RESULTADOS", "FIGURAS")
+ruta_csv        <- file.path(ruta_base, "RESULTADOS", "CSV")
+
+archivo_eventos <- file.path(ruta_procesados, "eventos_nspei_todas_escalas_clasificados.csv")
+
+============================================================
+CELDA 6 - code
+============================================================
+eventos <- read.csv(archivo_eventos, stringsAsFactors = FALSE) %>%
+  clean_names() %>%
+  mutate(
+    fecha_inicio = as.Date(fecha_inicio),
+    fecha_fin    = as.Date(fecha_fin),
+    cluster_ward = as.factor(cluster_ward)
+  )
+
+eventos_3 <- eventos %>%
+  filter(escala == "nspei_3")
+
+table(eventos_3$cluster_ward)
+
+============================================================
+CELDA 7 - code
+============================================================
+ajustar_marginal_lmom <- function(x, dist_name) {
+  x <- as.numeric(x)
+  x <- x[is.finite(x) & x > 0]
+  lmr <- lmoms(x)
+  lmom2par(lmr, type = dist_name)
+}
+
+============================================================
+CELDA 8 - code
+============================================================
+cdf_marginal <- function(x, par_obj) {
+  p <- plmomco(x, par_obj)
+  pmin(pmax(p, 1e-8), 1 - 1e-8)
+}
+
+============================================================
+CELDA 9 - code
+============================================================
+prob_and_or <- function(d, s, par_d, par_s, theta_gumbel) {
+  
+  u <- cdf_marginal(d, par_d)
+  v <- cdf_marginal(s, par_s)
+  
+  cop <- gumbelCopula(param = theta_gumbel, dim = 2)
+  Cuv <- pCopula(cbind(u, v), cop)
+  
+  p_and <- 1 - u - v + Cuv
+  p_or  <- 1 - Cuv
+  
+  tibble(
+    d = d,
+    s = s,
+    u = u,
+    v = v,
+    Cuv = Cuv,
+    p_and = p_and,
+    p_or = p_or
+  )
+}
+
+============================================================
+CELDA 10 - code
+============================================================
+retorno_and_or <- function(d, s, par_d, par_s, theta_gumbel, lambda_eventos) {
+  
+  probs <- prob_and_or(d, s, par_d, par_s, theta_gumbel)
+  
+  probs %>%
+    mutate(
+      T_and = 1 / (lambda_eventos * p_and),
+      T_or  = 1 / (lambda_eventos * p_or)
+    )
+}
+
+============================================================
+CELDA 11 - code
+============================================================
+datos_c1 <- eventos_3 %>%
+  filter(as.character(cluster_ward) == "1")
+
+N_anios <- 54
+lambda_c1 <- nrow(datos_c1) / N_anios
+
+par_d_c1 <- ajustar_marginal_lmom(datos_c1$duracion, "wei")
+par_s_c1 <- ajustar_marginal_lmom(datos_c1$severidad, "pe3") # pe3 significa
+
+theta_c1 <- 2.8444
+
+lambda_c1
+
+============================================================
+CELDA 12 - code
+============================================================
+perc_d_c1 <- quantile(datos_c1$duracion, probs = c(0.50, 0.75, 0.90), na.rm = TRUE)
+perc_s_c1 <- quantile(datos_c1$severidad, probs = c(0.50, 0.75, 0.90), na.rm = TRUE)
+
+perc_d_c1
+perc_s_c1
+
+============================================================
+CELDA 13 - code
+============================================================
+datos_c1 <- eventos_3 %>%
+  filter(as.character(cluster_ward) == "1")
+
+N_anios <- 54
+lambda_c1 <- nrow(datos_c1) / N_anios
+
+par_d_c1 <- ajustar_marginal_lmom(datos_c1$duracion, "wei")
+par_s_c1 <- ajustar_marginal_lmom(datos_c1$severidad, "pe3")
+
+theta_c1 <- 2.8444
+
+lambda_c1
+
+============================================================
+CELDA 14 - code
+============================================================
+grid_c1 <- expand.grid(
+  d = as.numeric(perc_d_c1),
+  s = as.numeric(perc_s_c1)
+) %>%
+  as_tibble()
+
+ret_c1 <- grid_c1 %>%
+  mutate(cluster = "1") %>%
+  bind_cols(
+    retorno_and_or(
+      d = grid_c1$d,
+      s = grid_c1$s,
+      par_d = par_d_c1,
+      par_s = par_s_c1,
+      theta_gumbel = theta_c1,
+      lambda_eventos = lambda_c1
+    ) %>%
+      select(u, v, Cuv, p_and, p_or, T_and, T_or)
+  )
+
+ret_c1
+
+============================================================
+CELDA 15 - code
+============================================================
+perc_d_c1 <- quantile(datos_c1$duracion, probs = c(0.50, 0.75, 0.90), na.rm = TRUE)
+perc_s_c1 <- quantile(datos_c1$severidad, probs = c(0.50, 0.75, 0.90), na.rm = TRUE)
+
+grid_c1 <- expand.grid(
+  d = as.numeric(perc_d_c1),
+  s = as.numeric(perc_s_c1)
+) %>%
+  as_tibble()
+
+ret_c1 <- grid_c1 %>%
+  mutate(cluster = "1") %>%
+  bind_cols(
+    retorno_and_or(
+      d = grid_c1$d,
+      s = grid_c1$s,
+      par_d = par_d_c1,
+      par_s = par_s_c1,
+      theta_gumbel = theta_c1,
+      lambda_eventos = lambda_c1
+    ) %>%
+      select(u, v, Cuv, p_and, p_or, T_and, T_or)
+  )
+
+ret_c1
+
+============================================================
+CELDA 16 - code
+============================================================
+
+
+============================================================
+CELDA 17 - code
+============================================================
+exists("perc_d_c1")
+exists("perc_s_c1")
+
+============================================================
+CELDA 18 - code
+============================================================
+# =========================================================
+# RETORNOS CONJUNTOS AND Y OR PARA LOS 3 CLUSTERS
+# nSPEI-3 + CÃ“PULA DE GUMBEL
+# =========================================================
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyverse,
+  janitor,
+  lmomco,
+  copula,
+  ggplot2,
+  patchwork,
+  viridisLite
+)
+
+# ---------------------------
+# 1. RUTAS
+# ---------------------------
+ruta_base <- "/Volumes/USB/PROYECTO_SEQUIAS_COPULAS_UNCP"
+
+ruta_procesados <- file.path(ruta_base, "DATOS", "PROCESADOS")
+ruta_tablas     <- file.path(ruta_base, "RESULTADOS", "TABLAS")
+ruta_figuras    <- file.path(ruta_base, "RESULTADOS", "FIGURAS")
+
+archivo_eventos <- file.path(ruta_procesados, "eventos_nspei_todas_escalas_clasificados.csv")
+
+# ---------------------------
+# 2. LEER BASE Y FILTRAR NSPEI-3
+# ---------------------------
+eventos <- read.csv(archivo_eventos, stringsAsFactors = FALSE) %>%
+  clean_names() %>%
+  mutate(
+    fecha_inicio = as.Date(fecha_inicio),
+    fecha_fin    = as.Date(fecha_fin),
+    cluster_ward = as.factor(cluster_ward)
+  )
+
+eventos_3 <- eventos %>%
+  filter(escala == "nspei_3")
+
+# ---------------------------
+# 3. FUNCIONES AUXILIARES
+# ---------------------------
+ajustar_marginal_lmom <- function(x, dist_name) {
+  x <- as.numeric(x)
+  x <- x[is.finite(x) & x > 0]
+  lmr <- lmoms(x)
+  lmom2par(lmr, type = dist_name)
+}
+
+cdf_marginal <- function(x, par_obj) {
+  p <- plmomco(x, par_obj)
+  pmin(pmax(p, 1e-8), 1 - 1e-8)
+}
+
+prob_and_or <- function(d, s, par_d, par_s, theta_gumbel) {
+  
+  u <- cdf_marginal(d, par_d)
+  v <- cdf_marginal(s, par_s)
+  
+  cop <- gumbelCopula(param = theta_gumbel, dim = 2)
+  Cuv <- pCopula(cbind(u, v), cop)
+  
+  p_and <- 1 - u - v + Cuv
+  p_or  <- 1 - Cuv
+  
+  tibble(
+    d = d,
+    s = s,
+    u = u,
+    v = v,
+    Cuv = Cuv,
+    p_and = p_and,
+    p_or = p_or
+  )
+}
+
+retorno_and_or <- function(d, s, par_d, par_s, theta_gumbel, lambda_eventos) {
+  
+  probs <- prob_and_or(d, s, par_d, par_s, theta_gumbel)
+  
+  probs %>%
+    mutate(
+      T_and = 1 / (lambda_eventos * p_and),
+      T_or  = 1 / (lambda_eventos * p_or)
+    )
+}
+
+procesar_cluster_retorno <- function(datos_cluster, cluster_id, dist_d, dist_s, theta_gumbel, N_anios = 54) {
+  
+  lambda_eventos <- nrow(datos_cluster) / N_anios
+  
+  par_d <- ajustar_marginal_lmom(datos_cluster$duracion, dist_d)
+  par_s <- ajustar_marginal_lmom(datos_cluster$severidad, dist_s)
+  
+  perc_d <- quantile(datos_cluster$duracion, probs = c(0.50, 0.75, 0.90), na.rm = TRUE)
+  perc_s <- quantile(datos_cluster$severidad, probs = c(0.50, 0.75, 0.90), na.rm = TRUE)
+  
+  grid <- expand.grid(
+    d = as.numeric(perc_d),
+    s = as.numeric(perc_s)
+  ) %>%
+    as_tibble()
+  
+  tabla_ret <- grid %>%
+    mutate(
+      cluster = as.character(cluster_id),
+      dist_d = toupper(dist_d),
+      dist_s = toupper(dist_s),
+      theta = theta_gumbel,
+      lambda = lambda_eventos
+    ) %>%
+    bind_cols(
+      retorno_and_or(
+        d = grid$d,
+        s = grid$s,
+        par_d = par_d,
+        par_s = par_s,
+        theta_gumbel = theta_gumbel,
+        lambda_eventos = lambda_eventos
+      ) %>%
+        select(u, v, Cuv, p_and, p_or, T_and, T_or)
+    )
+  
+  list(
+    tabla = tabla_ret,
+    par_d = par_d,
+    par_s = par_s,
+    lambda = lambda_eventos
+  )
+}
+
+malla_retornos <- function(datos_cluster, par_d, par_s, theta_gumbel, lambda_eventos,
+                           cluster_label, n_d = 60, n_s = 60) {
+  
+  d_seq <- seq(min(datos_cluster$duracion), quantile(datos_cluster$duracion, 0.95), length.out = n_d)
+  s_seq <- seq(min(datos_cluster$severidad), quantile(datos_cluster$severidad, 0.95), length.out = n_s)
+  
+  grid <- expand.grid(d = d_seq, s = s_seq) %>%
+    as_tibble()
+  
+  ret <- retorno_and_or(
+    d = grid$d,
+    s = grid$s,
+    par_d = par_d,
+    par_s = par_s,
+    theta_gumbel = theta_gumbel,
+    lambda_eventos = lambda_eventos
+  )
+  
+  bind_cols(grid, ret %>% select(T_and, T_or)) %>%
+    mutate(cluster = cluster_label)
+}
+
+# ---------------------------
+# 4. DATOS POR CLUSTER
+# ---------------------------
+datos_c1 <- eventos_3 %>% filter(as.character(cluster_ward) == "1")
+datos_c2 <- eventos_3 %>% filter(as.character(cluster_ward) == "2")
+datos_c3 <- eventos_3 %>% filter(as.character(cluster_ward) == "3")
+
+# ParÃ¡metros de las mejores cÃ³pulas
+theta_c1 <- 2.8444
+theta_c2 <- 2.8306
+theta_c3 <- 3.3715
+
+# ---------------------------
+# 5. CALCULAR RETORNOS PARA LOS 3 CLUSTERS
+# ---------------------------
+res_c1 <- procesar_cluster_retorno(
+  datos_cluster = datos_c1,
+  cluster_id = "1",
+  dist_d = "wei",
+  dist_s = "pe3",
+  theta_gumbel = theta_c1
+)
+
+res_c2 <- procesar_cluster_retorno(
+  datos_cluster = datos_c2,
+  cluster_id = "2",
+  dist_d = "wei",
+  dist_s = "pe3",
+  theta_gumbel = theta_c2
+)
+
+res_c3 <- procesar_cluster_retorno(
+  datos_cluster = datos_c3,
+  cluster_id = "3",
+  dist_d = "pe3",
+  dist_s = "pe3",
+  theta_gumbel = theta_c3
+)
+
+retornos_all <- bind_rows(
+  res_c1$tabla,
+  res_c2$tabla,
+  res_c3$tabla
+) %>%
+  mutate(
+    Cuv   = round(Cuv, 5),
+    p_and = round(p_and, 5),
+    p_or  = round(p_or, 5),
+    T_and = round(T_and, 3),
+    T_or  = round(T_or, 3)
+  ) %>%
+  arrange(cluster, d, s)
+
+retornos_all
+
+# Guardar tabla
+write.csv(
+  retornos_all,
+  file.path(ruta_tablas, "retornos_and_or_nspei3_tres_clusters.csv"),
+  row.names = FALSE
+)
+
+# ---------------------------
+# 6. MALLAS DE RETORNO PARA GRAFICAR
+# ---------------------------
+malla_c1 <- malla_retornos(
+  datos_cluster = datos_c1,
+  par_d = res_c1$par_d,
+  par_s = res_c1$par_s,
+  theta_gumbel = theta_c1,
+  lambda_eventos = res_c1$lambda,
+  cluster_label = "Cluster 1"
+)
+
+malla_c2 <- malla_retornos(
+  datos_cluster = datos_c2,
+  par_d = res_c2$par_d,
+  par_s = res_c2$par_s,
+  theta_gumbel = theta_c2,
+  lambda_eventos = res_c2$lambda,
+  cluster_label = "Cluster 2"
+)
+
+malla_c3 <- malla_retornos(
+  datos_cluster = datos_c3,
+  par_d = res_c3$par_d,
+  par_s = res_c3$par_s,
+  theta_gumbel = theta_c3,
+  lambda_eventos = res_c3$lambda,
+  cluster_label = "Cluster 3"
+)
+
+malla_all <- bind_rows(malla_c1, malla_c2, malla_c3)
+
+# ---------------------------
+# 7. FIGURAS AND Y OR
+# ---------------------------
+p_and <- ggplot(malla_all, aes(x = d, y = s, z = T_and)) +
+  geom_raster(aes(fill = T_and), interpolate = TRUE) +
+  geom_contour(color = "white", bins = 8, linewidth = 0.35) +
+  facet_wrap(~cluster, scales = "free", ncol = 3) +
+  scale_fill_viridis_c(option = "C", name = "T_AND (aÃ±os)") +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Periodo de retorno conjunto tipo AND",
+    subtitle = "nSPEI-3 + cÃ³pula de Gumbel",
+    x = "DuraciÃ³n (meses)",
+    y = "Severidad"
+  )
+
+p_or <- ggplot(malla_all, aes(x = d, y = s, z = T_or)) +
+  geom_raster(aes(fill = T_or), interpolate = TRUE) +
+  geom_contour(color = "white", bins = 8, linewidth = 0.35) +
+  facet_wrap(~cluster, scales = "free", ncol = 3) +
+  scale_fill_viridis_c(option = "D", name = "T_OR (aÃ±os)") +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Periodo de retorno conjunto tipo OR",
+    subtitle = "nSPEI-3 + cÃ³pula de Gumbel",
+    x = "DuraciÃ³n (meses)",
+    y = "Severidad"
+  )
+
+p_and
+p_or
+
+ggsave(
+  file.path(ruta_figuras, "retorno_and_tres_clusters.png"),
+  p_and, width = 12, height = 4.8, dpi = 300, bg = "white"
+)
+
+ggsave(
+  file.path(ruta_figuras, "retorno_or_tres_clusters.png"),
+  p_or, width = 12, height = 4.8, dpi = 300, bg = "white"
+)
+
+# Figura compuesta
+p_comp <- p_and / p_or + plot_layout(heights = c(1, 1))
+p_comp
+
+ggsave(
+  file.path(ruta_figuras, "retorno_and_or_tres_clusters.png"),
+  p_comp, width = 12, height = 9, dpi = 300, bg = "white"
+)
+
+# ---------------------------
+# 8. RESUMEN DE UMBRALES ALTOS (P90 VS P90)
+# ---------------------------
+resumen_p90 <- retornos_all %>%
+  group_by(cluster) %>%
+  filter(d == max(d), s == max(s)) %>%
+  ungroup()
+
+resumen_p90
+
+write.csv(
+  resumen_p90,
+  file.path(ruta_tablas, "resumen_p90_retornos_tres_clusters.csv"),
+  row.names = FALSE
+)
+
+============================================================
+CELDA 19 - code
+============================================================
+# =========================================================
+# FIGURAS Q1 DE PERIODOS DE RETORNO AND Y OR
+# =========================================================
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyverse,
+  patchwork,
+  viridisLite,
+  scales
+)
+
+# ---------------------------
+# 1. TEMA ESTILO PAPER
+# ---------------------------
+theme_q1_ret <- function() {
+  theme_minimal(base_size = 13) +
+    theme(
+      plot.title = element_text(face = "bold", size = 18, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5, colour = "#444444"),
+      strip.text = element_text(face = "bold", size = 13),
+      axis.title = element_text(face = "bold", size = 13),
+      axis.text = element_text(size = 11, colour = "#333333"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(colour = "#D9D9D9", linewidth = 0.25),
+      legend.position = "right",
+      legend.title = element_text(face = "bold", size = 12),
+      legend.text = element_text(size = 11),
+      strip.background = element_rect(fill = "#F4F4F4", colour = NA),
+      plot.background = element_rect(fill = "white", colour = NA),
+      panel.background = element_rect(fill = "white", colour = NA)
+    )
+}
+
+# ---------------------------
+# 2. PREPARAR VARIABLES LOG
+# ---------------------------
+malla_plot <- malla_all %>%
+  mutate(
+    logT_and = log10(T_and),
+    logT_or  = log10(T_or)
+  )
+
+# Etiquetas bonitas para la leyenda
+breaks_and <- pretty(range(malla_plot$logT_and, na.rm = TRUE), n = 5)
+labels_and <- round(10^breaks_and, 1)
+
+breaks_or <- pretty(range(malla_plot$logT_or, na.rm = TRUE), n = 5)
+labels_or <- round(10^breaks_or, 1)
+
+# ---------------------------
+# 3. FIGURA AND MEJORADA
+# ---------------------------
+p_and_q1 <- ggplot(malla_plot, aes(x = d, y = s)) +
+  geom_raster(aes(fill = logT_and), interpolate = TRUE) +
+  geom_contour(
+    aes(z = logT_and),
+    bins = 7,
+    colour = "white",
+    linewidth = 0.45,
+    alpha = 0.85
+  ) +
+  facet_wrap(~cluster, scales = "free", ncol = 3) +
+  scale_fill_gradientn(
+    colours = rev(viridisLite::magma(256)),
+    name = expression(log[10](T[AND])),
+    breaks = breaks_and,
+    labels = labels_and
+  ) +
+  labs(
+    title = "Periodo de retorno conjunto tipo AND",
+    subtitle = "Escala nSPEI-3 y cÃ³pula de Gumbel",
+    x = "DuraciÃ³n (meses)",
+    y = "Severidad"
+  ) +
+  theme_q1_ret()
+
+p_and_q1
+
+# ---------------------------
+# 4. FIGURA OR MEJORADA
+# ---------------------------
+p_or_q1 <- ggplot(malla_plot, aes(x = d, y = s)) +
+  geom_raster(aes(fill = logT_or), interpolate = TRUE) +
+  geom_contour(
+    aes(z = logT_or),
+    bins = 7,
+    colour = "white",
+    linewidth = 0.45,
+    alpha = 0.85
+  ) +
+  facet_wrap(~cluster, scales = "free", ncol = 3) +
+  scale_fill_gradientn(
+    colours = viridisLite::viridis(256),
+    name = expression(log[10](T[OR])),
+    breaks = breaks_or,
+    labels = labels_or
+  ) +
+  labs(
+    title = "Periodo de retorno conjunto tipo OR",
+    subtitle = "Escala nSPEI-3 y cÃ³pula de Gumbel",
+    x = "DuraciÃ³n (meses)",
+    y = "Severidad"
+  ) +
+  theme_q1_ret()
+
+p_or_q1
+
+# ---------------------------
+# 5. GUARDAR FIGURAS INDIVIDUALES
+# ---------------------------
+ggsave(
+  file.path(ruta_figuras, "retorno_and_q1.png"),
+  p_and_q1,
+  width = 12.5,
+  height = 4.8,
+  dpi = 400,
+  bg = "white"
+)
+
+ggsave(
+  file.path(ruta_figuras, "retorno_or_q1.png"),
+  p_or_q1,
+  width = 12.5,
+  height = 4.8,
+  dpi = 400,
+  bg = "white"
+)
+
+# ---------------------------
+# 6. FIGURA COMPUESTA FINAL
+# ---------------------------
+p_ret_final <- p_and_q1 / p_or_q1 +
+  plot_annotation(
+    title = "Periodos de retorno conjuntos de sequÃ­as por cluster",
+    subtitle = "ComparaciÃ³n bajo los criterios AND y OR usando cÃ³pula de Gumbel",
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 19, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  )
+
+p_ret_final
+
+ggsave(
+  file.path(ruta_figuras, "retornos_and_or_q1_final.png"),
+  p_ret_final,
+  width = 12.5,
+  height = 9.2,
+  dpi = 400,
+  bg = "white"
+)
+
+============================================================
+CELDA 20 - code
+============================================================
+# =========================================================
+# FIGURAS INDEPENDIENTES Q1 DE RETORNOS AND Y OR POR CLUSTER
+# con colores de sequÃ­a, contornos etiquetados y percentiles
+# =========================================================
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyverse,
+  viridisLite,
+  metR
+)
+
+# ---------------------------------------------------------
+# 1. TEMA GRÃFICO
+# ---------------------------------------------------------
+theme_q1_single <- function() {
+  theme_minimal(base_size = 13) +
+    theme(
+      plot.title = element_text(face = "bold", size = 17, hjust = 0.5),
+      plot.subtitle = element_text(size = 11.5, hjust = 0.5, colour = "#444444"),
+      axis.title = element_text(face = "bold", size = 13),
+      axis.text = element_text(size = 11, colour = "#333333"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(colour = "#D9D9D9", linewidth = 0.25),
+      legend.position = "right",
+      legend.title = element_text(face = "bold", size = 12),
+      legend.text = element_text(size = 11),
+      plot.background = element_rect(fill = "white", colour = NA),
+      panel.background = element_rect(fill = "white", colour = NA)
+    )
+}
+
+# ---------------------------------------------------------
+# 2. PALETA TIPO SEQUÃA
+# tonos arena -> ocre -> naranja -> rojo oscuro
+# ---------------------------------------------------------
+pal_sequia <- c(
+  "#f7f3e8",
+  "#e8d8a8",
+  "#d8b365",
+  "#c97b3b",
+  "#b24a2f",
+  "#7f1d1d"
+)
+
+# ---------------------------------------------------------
+# 3. FUNCIÃ“N PARA EXTRAER PERCENTILES DE UN CLUSTER
+# ---------------------------------------------------------
+extraer_percentiles <- function(datos_cluster) {
+  tibble(
+    tipo = c("P50", "P75", "P90"),
+    d = as.numeric(quantile(datos_cluster$duracion, probs = c(0.50, 0.75, 0.90), na.rm = TRUE)),
+    s = as.numeric(quantile(datos_cluster$severidad, probs = c(0.50, 0.75, 0.90), na.rm = TRUE))
+  )
+}
+
+# ---------------------------------------------------------
+# 4. FUNCIÃ“N PARA GRAFICAR UNA FIGURA
+# tipo = "AND" o "OR"
+# ---------------------------------------------------------
+plot_retorno_individual <- function(malla_df, datos_cluster, cluster_label, tipo = c("AND", "OR")) {
+  
+  tipo <- match.arg(tipo)
+  percs <- extraer_percentiles(datos_cluster)
+  
+  if (tipo == "AND") {
+    zvar <- "T_and"
+    titulo <- paste0(cluster_label, " | Periodo de retorno conjunto tipo AND")
+    subtitulo <- "Escala nSPEI-3 con cÃ³pula de Gumbel"
+    legend_lab <- expression(T[AND]~"(aÃ±os)")
+  } else {
+    zvar <- "T_or"
+    titulo <- paste0(cluster_label, " | Periodo de retorno conjunto tipo OR")
+    subtitulo <- "Escala nSPEI-3 con cÃ³pula de Gumbel"
+    legend_lab <- expression(T[OR]~"(aÃ±os)")
+  }
+  
+  # niveles de contorno
+  brks <- pretty(range(malla_df[[zvar]], na.rm = TRUE), n = 7)
+  
+  ggplot(malla_df, aes(x = d, y = s)) +
+    geom_raster(aes(fill = .data[[zvar]]), interpolate = TRUE) +
+    geom_contour(
+      aes(z = .data[[zvar]], color = after_stat(level)),
+      breaks = brks,
+      linewidth = 0.55,
+      show.legend = FALSE
+    ) +
+    metR::geom_text_contour(
+      aes(z = .data[[zvar]]),
+      breaks = brks,
+      stroke = 0.15,
+      size = 3.2,
+      check_overlap = TRUE
+    ) +
+    geom_vline(
+      data = percs,
+      aes(xintercept = d),
+      linetype = "dashed",
+      linewidth = 0.45,
+      color = "#4d4d4d"
+    ) +
+    geom_hline(
+      data = percs,
+      aes(yintercept = s),
+      linetype = "dashed",
+      linewidth = 0.45,
+      color = "#4d4d4d"
+    ) +
+    geom_text(
+      data = percs,
+      aes(x = d, y = min(malla_df$s, na.rm = TRUE), label = tipo),
+      inherit.aes = FALSE,
+      vjust = 1.8,
+      size = 3.3,
+      color = "#3a3a3a",
+      fontface = "bold"
+    ) +
+    geom_text(
+      data = percs,
+      aes(x = min(malla_df$d, na.rm = TRUE), y = s, label = tipo),
+      inherit.aes = FALSE,
+      hjust = -0.15,
+      size = 3.3,
+      color = "#3a3a3a",
+      fontface = "bold"
+    ) +
+    scale_fill_gradientn(
+      colours = pal_sequia,
+      name = legend_lab
+    ) +
+    labs(
+      title = titulo,
+      subtitle = subtitulo,
+      x = "DuraciÃ³n (meses)",
+      y = "Severidad"
+    ) +
+    theme_q1_single()
+}
+
+# ---------------------------------------------------------
+# 5. SEPARAR MALLAS Y DATOS POR CLUSTER
+# ---------------------------------------------------------
+malla_c1_plot <- malla_all %>% filter(cluster == "Cluster 1")
+malla_c2_plot <- malla_all %>% filter(cluster == "Cluster 2")
+malla_c3_plot <- malla_all %>% filter(cluster == "Cluster 3")
+
+datos_c1_plot <- datos_c1
+datos_c2_plot <- datos_c2
+datos_c3_plot <- datos_c3
+
+# ---------------------------------------------------------
+# 6. GENERAR LAS 6 FIGURAS
+# ---------------------------------------------------------
+p_and_c1 <- plot_retorno_individual(malla_c1_plot, datos_c1_plot, "Cluster 1", "AND")
+p_or_c1  <- plot_retorno_individual(malla_c1_plot, datos_c1_plot, "Cluster 1", "OR")
+
+p_and_c2 <- plot_retorno_individual(malla_c2_plot, datos_c2_plot, "Cluster 2", "AND")
+p_or_c2  <- plot_retorno_individual(malla_c2_plot, datos_c2_plot, "Cluster 2", "OR")
+
+p_and_c3 <- plot_retorno_individual(malla_c3_plot, datos_c3_plot, "Cluster 3", "AND")
+p_or_c3  <- plot_retorno_individual(malla_c3_plot, datos_c3_plot, "Cluster 3", "OR")
+
+# Mostrar en cuaderno
+p_and_c1
+p_or_c1
+p_and_c2
+p_or_c2
+p_and_c3
+p_or_c3
+
+# ---------------------------------------------------------
+# 7. GUARDAR FIGURAS
+# ---------------------------------------------------------
+ggsave(file.path(ruta_figuras, "retorno_AND_cluster1_q1.png"), p_and_c1,
+       width = 7.2, height = 5.8, dpi = 400, bg = "white")
+
+ggsave(file.path(ruta_figuras, "retorno_OR_cluster1_q1.png"), p_or_c1,
+       width = 7.2, height = 5.8, dpi = 400, bg = "white")
+
+ggsave(file.path(ruta_figuras, "retorno_AND_cluster2_q1.png"), p_and_c2,
+       width = 7.2, height = 5.8, dpi = 400, bg = "white")
+
+ggsave(file.path(ruta_figuras, "retorno_OR_cluster2_q1.png"), p_or_c2,
+       width = 7.2, height = 5.8, dpi = 400, bg = "white")
+
+ggsave(file.path(ruta_figuras, "retorno_AND_cluster3_q1.png"), p_and_c3,
+       width = 7.2, height = 5.8, dpi = 400, bg = "white")
+
+ggsave(file.path(ruta_figuras, "retorno_OR_cluster3_q1.png"), p_or_c3,
+       width = 7.2, height = 5.8, dpi = 400, bg = "white")
+
+============================================================
+CELDA 21 - markdown
+============================================================
+
+============================================================
+CELDA 22 - markdown
+============================================================
+
+============================================================
+CELDA 23 - markdown
+============================================================
+
